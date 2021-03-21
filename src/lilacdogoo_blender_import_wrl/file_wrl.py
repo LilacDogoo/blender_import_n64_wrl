@@ -300,7 +300,7 @@ def to_blender(scene: PreBlender_Scene):
         # Texture Aplha Inversion Node
         node_texture_alpha_inversion: bpy.types.Node = nodes.new('ShaderNodeMath')
         node_texture_alpha_inversion.label = "Invert Alpha"
-        node_texture_alpha_inversion.location = node_texture_alpha.location[0] + node_texture_alpha.width + 50, node_texture_alpha.location[1] + node_texture_alpha.height + 60
+        node_texture_alpha_inversion.location = node_texture_alpha.location[0] + node_texture_alpha.width + 50, node_texture_alpha.location[1] - 60
         node_texture_alpha_inversion.operation = 'SUBTRACT'
         node_texture_alpha_inversion.inputs[0].default_value = 1.0
         node_texture_alpha_inversion.inputs[1].default_value = 0.0
