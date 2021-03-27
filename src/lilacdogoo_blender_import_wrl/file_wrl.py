@@ -380,6 +380,7 @@ def to_blender(scene: PreBlender_Scene):
         blenderMaterials.append(blenderMaterial)
 
     # ▬▬ MESHES ▬▬
+    blender_collection: bpy.types.Collection = bpy.data.collections.new("WRL Import.000")
     for mesh in scene.meshes:
         # CREATE BLENDER STUFF
         blender_mesh: bpy.types.Mesh = bpy.data.meshes.new(mesh.name)
@@ -420,8 +421,9 @@ def to_blender(scene: PreBlender_Scene):
         blender_bMesh.to_mesh(blender_mesh)
         blender_mesh.materials.append(blenderMaterials[mesh.material.index])
         blender_object.color = blenderMaterials[mesh.material.index].diffuse_color
-        bpy.context.scene.collection.objects.link(blender_object)
+        blender_collection.objects.link(blender_object)
         blender_bMesh.free()
+    bpy.context.scene.collection.children.link(blender_collection)
 
 
 if __name__ == "__main__":
