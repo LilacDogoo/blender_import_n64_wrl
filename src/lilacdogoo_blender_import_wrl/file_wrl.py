@@ -144,7 +144,7 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
                                 if s[0] == "transparency": material.alpha = 1 - float(s[1])
                                 i += 1
                                 s = content[i].split()
-                        if s[0] == "texture":  # Texture Parameters
+                        elif s[0] == "texture":  # Texture Parameters
                             i += 1
                             s = content[i].split()
                             while not s[0] == "}":
@@ -154,7 +154,7 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
                                 s = content[i].split()
                         i += 1
                         s = content[i].split()
-                if s[0] == "geometry":  # Mesh
+                elif s[0] == "geometry":  # Mesh
                     mesh.name = s[2]
                     i += 1
                     s = content[i].split()
@@ -173,7 +173,7 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
                                         s = content[i].split()
                                 i += 1
                                 s = content[i].split()
-                        if s[0] == "texCoord":  # Mesh Texture Coordinates
+                        elif s[0] == "texCoord":  # Mesh Texture Coordinates
                             i += 1
                             s = content[i].split()
                             while not s[0] == "}":
@@ -186,7 +186,7 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
                                         s = content[i].split()
                                 i += 1
                                 s = content[i].split()
-                        if s[0] == "color":  # Mesh Texture Coordinates
+                        elif s[0] == "color":  # Vertex Colors
                             i += 1
                             s = content[i].split()
                             while not s[0] == "}":
@@ -242,12 +242,23 @@ def is_BMP_valid_transparency(path: str) -> bool:
 def to_blender(scene: PreBlender_Scene):
     if scene is None: return
     r = random.Random()
+
+    # ▬▬ MATERIALS ▬▬
     blenderMaterials: List[bpy.types.Material] = []
     for mat in scene.materials:
         blenderMaterial: bpy.types.Material = bpy.data.materials.new(mat.name)
         blenderMaterial.diffuse_color = (r.random(), r.random(), r.random(), 1.0)
         blenderMaterial.use_backface_culling = True
         blenderMaterial.use_nodes = True
+
+        # Usage Flags
+        use_diffuse:bool = mat.texture_url is not None
+        use_vertex_color:bool = True if mat.first_mesh_linked is not None and len(mat.first_mesh_linked.colors) > 0 else False
+        use_alpha_map:bool = False
+        if use_diffuse:
+            F = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
+            use_alpha_map = True if os.path.isfile(F) and is_BMP_valid_transparency(F) else False
+        use_ambient_intensity = True if mat.ambient_intensity is not None and mat.ambient_intensity != 1 else False
 
         # ▬ NODES ▬
         # Principled BSDF
@@ -260,70 +271,115 @@ def to_blender(scene: PreBlender_Scene):
         node_bsdf.inputs['Alpha'].default_value = mat.alpha
 
         # Vector Math - Ambient intensity
-        node_ambient_intensity: bpy.types.Node = nodes.new('ShaderNodeVectorMath')
-        node_ambient_intensity.name = "Ambient Intensity"
-        node_ambient_intensity.location = (node_bsdf.location[0] - node_ambient_intensity.width - 50, node_bsdf.location[1])
-        node_ambient_intensity.inputs['Scale'].default_value = mat.ambient_intensity
+        if use_ambient_intensity:
+            node_ambient_intensity: bpy.types.Node = nodes.new('ShaderNodeVectorMath')
+            node_ambient_intensity.name = "Ambient Intensity"
+            node_ambient_intensity.label = "Ambient Intensity"
+            node_ambient_intensity.location = (node_bsdf.location[0] - node_ambient_intensity.width - 50, node_bsdf.location[1])
+            node_ambient_intensity.operation = 'SCALE'
+            node_ambient_intensity.inputs['Scale'].default_value = mat.ambient_intensity
 
         # RGB Multiply - Vertex Color
-        node_mix_vertex_color: bpy.types.Node = nodes.new('ShaderNodeMixRGB')
-        node_mix_vertex_color.location = (node_ambient_intensity.location[0] - node_mix_vertex_color.width - 50, node_bsdf.location[1])
-        node_mix_vertex_color.blend_type = 'MULTIPLY'
-        node_mix_vertex_color.inputs['Fac'].default_value = 1.0
-        node_mix_vertex_color.inputs['Color1'].default_value = (1.0, 1.0, 1.0, 1.0)
-        node_mix_vertex_color.inputs['Color2'].default_value = (1.0, 1.0, 1.0, 1.0)
+        if use_vertex_color and use_diffuse:
+            node_mix_vertex_color: bpy.types.Node = nodes.new('ShaderNodeMixRGB')
+            node_mix_vertex_color.name = "Mix Col & VertCol"
+            node_mix_vertex_color.label = "Mix Col & VertCol"
+            node_mix_vertex_color.blend_type = 'MULTIPLY'
+            node_mix_vertex_color.inputs['Fac'].default_value = 1.0
+            node_mix_vertex_color.inputs['Color1'].default_value = (1.0, 1.0, 1.0, 1.0)
+            node_mix_vertex_color.inputs['Color2'].default_value = (1.0, 1.0, 1.0, 1.0)
+            if use_ambient_intensity:
+                node_mix_vertex_color.location = (node_ambient_intensity.location[0] - node_mix_vertex_color.width - 50, node_bsdf.location[1])
+            else:
+                node_mix_vertex_color.location = (node_bsdf.location[0] - node_mix_vertex_color.width - 50, node_bsdf.location[1])
 
         # Texture Node
-        node_texture_diffuse: bpy.types.Node = nodes.new('ShaderNodeTexImage')
-        node_texture_diffuse.label = mat.name  # Diffuse Texture Name
-        node_texture_diffuse.width = 300
-        node_texture_diffuse.location = (node_mix_vertex_color.location[0] - node_texture_diffuse.width - 50, node_bsdf.location[1])
-        if mat.texture_url is not None:
+        if use_diffuse:
+            node_texture_diffuse: bpy.types.Node = nodes.new('ShaderNodeTexImage')
+            node_texture_diffuse.name = "Diffuse Color"
+            node_texture_diffuse.label = "Diffuse Color"
+            node_texture_diffuse.width = 300
             F = os.path.join(scene.directory, mat.texture_url)  # Filepath of image to add to blender
-            if lilacdogoo_blender_import_wrl.debug: print(F)
-            if os.path.isfile(F): node_texture_diffuse.image = bpy.data.images.load(filepath=F, check_existing=True)
-        node_texture_diffuse.extension = 'REPEAT' if mat.texture_repeat else 'CLIP'
+            if os.path.isfile(F):
+                node_texture_diffuse.image = bpy.data.images.load(filepath=F, check_existing=True)
+            node_texture_diffuse.extension = 'REPEAT' if mat.texture_repeat else 'CLIP'
+            if use_vertex_color:
+                node_texture_diffuse.location = (node_mix_vertex_color.location[0] - node_texture_diffuse.width - 50, node_bsdf.location[1])
+            else:
+                if use_ambient_intensity:
+                    node_texture_diffuse.location = (node_ambient_intensity.location[0] - node_texture_diffuse.width - 50, node_bsdf.location[1])
+                else:
+                    node_texture_diffuse.location = (node_bsdf.location[0] - node_texture_diffuse.width - 50, node_bsdf.location[1])
 
         # Vertex Color Node
-        node_vertex_color: bpy.types.Node = nodes.new('ShaderNodeVertexColor')
-        node_vertex_color.location = (node_mix_vertex_color.location[0] - node_vertex_color.width - 50, node_texture_diffuse.location[1] - 300)
+        if use_vertex_color:
+            node_vertex_color: bpy.types.Node = nodes.new('ShaderNodeVertexColor')
+            node_vertex_color.name = "Vertex Color"
+            node_vertex_color.label = "Vertex Color"
+            if use_diffuse:
+                node_vertex_color.location = (node_mix_vertex_color.location[0] - node_vertex_color.width - 50, node_texture_diffuse.location[1] - 300)
+            else:
+                if use_ambient_intensity:
+                    node_vertex_color.location = (node_ambient_intensity.location[0] - node_vertex_color.width - 50, node_ambient_intensity.location[1] - 30)
+                else:
+                    node_vertex_color.location = (node_bsdf.location[0] - node_vertex_color.width - 50, node_bsdf.location[1] - 30)
 
-        # Texture Alpha Node
-        node_texture_alpha: bpy.types.Node = nodes.new('ShaderNodeTexImage')
-        node_texture_alpha.label = "%s_Aplha" % mat.name
-        node_texture_alpha.width = 300
-        node_texture_alpha.location = node_texture_diffuse.location[0], node_texture_diffuse.location[1] - 500
-        if mat.texture_url is not None:
+
+        if use_alpha_map:
+            # Texture Aplha Inversion Node
+            node_texture_alpha_inversion: bpy.types.Node = nodes.new('ShaderNodeMath')
+            node_texture_alpha_inversion.name = "Invert Alpha"
+            node_texture_alpha_inversion.label = "Invert Alpha"
+            node_texture_alpha_inversion.operation = 'SUBTRACT'
+            node_texture_alpha_inversion.inputs[0].default_value = 1.0
+            node_texture_alpha_inversion.inputs[1].default_value = 0.0
+            node_texture_alpha_inversion.location = node_bsdf.location[0] - node_texture_alpha_inversion.width - 50, node_bsdf.location[1] - 540
+
+            # Texture Alpha Node
+            node_texture_alpha: bpy.types.Node = nodes.new('ShaderNodeTexImage')
+            node_texture_alpha.name = "Alpha Map"
+            node_texture_alpha.label = "Alpha Map"
+            node_texture_alpha.width = 300
             F = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
-            if os.path.isfile(F): node_texture_alpha.image = bpy.data.images.load(filepath=F, check_existing=True)
+            if os.path.isfile(F):
+                node_texture_alpha.image = bpy.data.images.load(filepath=F, check_existing=True)
+            node_texture_alpha.location = node_texture_alpha_inversion.location[0] - node_texture_alpha.width - 50, node_bsdf.location[1] - 480
 
-        # Texture Aplha Inversion Node
-        node_texture_alpha_inversion: bpy.types.Node = nodes.new('ShaderNodeMath')
-        node_texture_alpha_inversion.label = "Invert Alpha"
-        node_texture_alpha_inversion.location = node_texture_alpha.location[0] + node_texture_alpha.width + 50, node_texture_alpha.location[1] - 60
-        node_texture_alpha_inversion.operation = 'SUBTRACT'
-        node_texture_alpha_inversion.inputs[0].default_value = 1.0
-        node_texture_alpha_inversion.inputs[1].default_value = 0.0
 
         # ▬ NODE LINKS ▬
         links: bpy.types.NodeLinks = blenderMaterial.node_tree.links
-        links.new(node_ambient_intensity.outputs['Vector'], node_bsdf.inputs['Base Color'])
-        links.new(node_mix_vertex_color.outputs['Color'], node_ambient_intensity.inputs['Vector'])
-        links.new(node_texture_alpha.outputs['Color'], node_texture_alpha_inversion.inputs[1])
+        if use_ambient_intensity:
+            links.new(node_ambient_intensity.outputs['Vector'], node_bsdf.inputs['Base Color'])
+            if use_diffuse:
+                if use_vertex_color:
+                    links.new(node_mix_vertex_color.outputs['Color'], node_ambient_intensity.inputs['Vector'])
+                    links.new(node_texture_diffuse.outputs['Color'], node_mix_vertex_color.inputs['Color1'])
+                    links.new(node_vertex_color.outputs['Color'], node_mix_vertex_color.inputs['Color2'])
+                else:
+                    links.new(node_texture_diffuse.outputs['Color'], node_ambient_intensity.inputs['Vector'])
+            else:
+                if use_vertex_color:
+                    links.new(node_vertex_color.outputs['Color'], node_ambient_intensity.inputs['Vector'])
+        else:
+            if use_diffuse:
+                if use_vertex_color:
+                    links.new(node_mix_vertex_color.outputs['Color'], node_bsdf.inputs['Base Color'])
+                    links.new(node_texture_diffuse.outputs['Color'], node_mix_vertex_color.inputs['Color1'])
+                    links.new(node_vertex_color.outputs['Color'], node_mix_vertex_color.inputs['Color2'])
+                else:
+                    links.new(node_texture_diffuse.outputs['Color'], node_bsdf.inputs['Base Color'])
+            else:
+                if use_vertex_color:
+                    links.new(node_vertex_color.outputs['Color'], node_bsdf.inputs['Base Color'])
 
-        # IF a texture is supplied THEN link node
-        if mat.texture_url is not None:
-            links.new(node_texture_diffuse.outputs['Color'], node_mix_vertex_color.inputs['Color1'])
-            F = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
-            if os.path.isfile(F) and is_BMP_valid_transparency(F):
-                links.new(node_texture_alpha.outputs['Color'], node_bsdf.inputs['Alpha'])
-                blenderMaterial.blend_method = 'CLIP'
-        # IF Vertext Colors are supplied THEN link node
-        if mat.first_mesh_linked is not None and len(mat.first_mesh_linked.colors) > 0:
-            links.new(node_vertex_color.outputs['Color'], node_mix_vertex_color.inputs['Color2'])
+        if use_alpha_map:
+            links.new(node_texture_alpha.outputs['Color'], node_texture_alpha_inversion.inputs[1])
+            links.new(node_texture_alpha.outputs['Color'], node_bsdf.inputs['Alpha'])
+            blenderMaterial.blend_method = 'CLIP'
 
         blenderMaterials.append(blenderMaterial)
 
+    # ▬▬ MESHES ▬▬
     for mesh in scene.meshes:
         # CREATE BLENDER STUFF
         blender_mesh: bpy.types.Mesh = bpy.data.meshes.new(mesh.name)
