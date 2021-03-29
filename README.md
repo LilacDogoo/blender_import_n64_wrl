@@ -33,6 +33,11 @@ Thanks to the dump that this person's plugin provides I was able to reassemble i
   <li>Done
 </ol>
 
+<h3>For Ripping Large Scenes</h3>
+<p>You will probably need to do many rips to get an entire level out of a game. I have simplified the process by putting each Dump into a seperate Collection. (Right click collection and Select all to move the whole collection easily.)
+<p>I have come across geometry that is far from the camera get scaled down. My solution is to delete all the oddly scaled geometry and do another rip. This time with the camera closer to your subject. (You can scale it manually if you wish but it is quite tedious.)
+<p>While working with the same game: You do not need to delete anything in the VRML folder between rips. The add-on will locate only what it needs and reuse assets where possible.
+
 <h2>Known Issue</h2>
 Alpha transparency is somewhat implemented but not perfect.<br>
 There was not enough data in the "Nemu64 Graphics" dump to be able to determine how to correctly handle alpha for each object. I did the best I could. Sadly, that meant I had to make the plugin a lot slower.<i>All Alpha files get scanned one by one. If they are completly black then I assumed that there is no alpha.</i><br>
