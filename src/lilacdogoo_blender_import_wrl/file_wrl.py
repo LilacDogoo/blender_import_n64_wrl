@@ -33,20 +33,17 @@ class BlenderOperator_wrl_import(bpy.types.Operator):
     filter_glob: bpy.props.StringProperty(default="*.wrl", options={'HIDDEN'})
 
     # Custom Properties used by the file browser
+    p_reuse_materials: bpy.props.BoolProperty(name="Reuse Materials",
+                                              description="IF the material uses the same diffuse texture THEN it will be used instead of creating a new material.",
+                                              default=True)
+
     # p_load_textures_and_materials: bpy.props.BoolProperty(name="Load Textures and Materials",
     #                                                       description="Attempts to load textures.",
     #                                                       default=True)
 
-    # p_cull_back_facing: bpy.props.BoolProperty(name="Cull Backfaces",
-    #                                            description="Generally enabled for video games models. Keep in mind, Models from these games are intended to 'back-face cull. Faces will exist in the exact same positions but have opposite normals.",
-    #                                            default=True)
-
-    # p_merge_vertices: bpy.props.BoolProperty(name="Merge Vertices",
-    #                                          description="The original model is all individual triangles. This will attempt to create a continuous 'connected' mesh. Slow.",
-    #                                          default=False)
-    # p_parse_motion: bpy.props.BoolProperty(name="Parse Armature Animation",
-    #                                                    description="For models that have animation data, an attempt will be made to parse it.\nCurrently not working",
-    #                                                    default=False)
+    p_cull_back_facing: bpy.props.BoolProperty(name="Cull Backfaces",
+                                               description="Generally enabled for video games models. Keep in mind, Models from these games are intended to 'back-face cull. Faces will exist in the exact same positions but have opposite normals.",
+                                               default=True)
 
     def invoke(self, context, event):
         self.directory = "C:\\VRML"
@@ -57,7 +54,7 @@ class BlenderOperator_wrl_import(bpy.types.Operator):
         time_start = time.time()  # Operation Timer
 
         scene: PreBlender_Scene = read_wrl_file(directory=self.directory, filename=self.filepath)
-        to_blender(scene)
+        to_blender(scene, self.p_reuse_materials, self.p_cull_back_facing)
 
         time_end = time.time()  # Operation Timer
         print("    Completed in %.4f seconds" % (time_end - time_start))
@@ -239,26 +236,49 @@ def is_BMP_valid_transparency(path: str) -> bool:
     return False
 
 
-def to_blender(scene: PreBlender_Scene):
+def to_blender(scene: PreBlender_Scene, p_reuse_materials: bool, p_cull_back_facing: bool):
     if scene is None: return
     r = random.Random()
 
     # ▬▬ MATERIALS ▬▬
     blenderMaterials: List[bpy.types.Material] = []
     for mat in scene.materials:
+        # Usage Flags
+        path_diffuse: str = os.path.join(scene.directory, mat.texture_url) if mat.texture_url is not None else None
+        if path_diffuse is None or not os.path.isfile(path_diffuse): path_diffuse = None
+        use_vertex_color: bool = True if mat.first_mesh_linked is not None and len(mat.first_mesh_linked.colors) > 0 else False
+
+        # Check if this texture is already in the project
+        if p_reuse_materials:
+            if path_diffuse is not None:
+                found_existing_material: bool = False
+                for M in bpy.data.materials:
+                    if M.node_tree.nodes.find('Diffuse Color') != -1:
+                        N = M.node_tree.nodes['Diffuse Color']
+                        if N.image is not None and N.image.filepath == path_diffuse:
+                            blenderMaterials.append(M)
+                            found_existing_material = True
+                            break
+                if found_existing_material: continue
+            elif use_vertex_color:
+                found_existing_material: bool = False
+                for M in bpy.data.materials:
+                    if M.node_tree.nodes.find('Vertex Color OnlyWRL'):
+                        blenderMaterials.append(M)
+                        found_existing_material = True
+                        break
+                if found_existing_material: continue
+
+        if path_diffuse is not None:
+            path_alpha_map = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
+            if not (os.path.isfile(path_alpha_map) and is_BMP_valid_transparency(path_alpha_map)):
+                path_alpha_map = None
+        use_ambient_intensity = True if mat.ambient_intensity is not None and mat.ambient_intensity != 1 else False
+
         blenderMaterial: bpy.types.Material = bpy.data.materials.new(mat.name)
         blenderMaterial.diffuse_color = (r.random(), r.random(), r.random(), 1.0)
-        blenderMaterial.use_backface_culling = True
+        blenderMaterial.use_backface_culling = p_cull_back_facing
         blenderMaterial.use_nodes = True
-
-        # Usage Flags
-        use_diffuse:bool = mat.texture_url is not None
-        use_vertex_color:bool = True if mat.first_mesh_linked is not None and len(mat.first_mesh_linked.colors) > 0 else False
-        use_alpha_map:bool = False
-        if use_diffuse:
-            F = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
-            use_alpha_map = True if os.path.isfile(F) and is_BMP_valid_transparency(F) else False
-        use_ambient_intensity = True if mat.ambient_intensity is not None and mat.ambient_intensity != 1 else False
 
         # ▬ NODES ▬
         # Principled BSDF
@@ -280,7 +300,7 @@ def to_blender(scene: PreBlender_Scene):
             node_ambient_intensity.inputs['Scale'].default_value = mat.ambient_intensity
 
         # RGB Multiply - Vertex Color
-        if use_vertex_color and use_diffuse:
+        if use_vertex_color and path_diffuse is not None:
             node_mix_vertex_color: bpy.types.Node = nodes.new('ShaderNodeMixRGB')
             node_mix_vertex_color.name = "Mix Col & VertCol"
             node_mix_vertex_color.label = "Mix Col & VertCol"
@@ -294,7 +314,7 @@ def to_blender(scene: PreBlender_Scene):
                 node_mix_vertex_color.location = (node_bsdf.location[0] - node_mix_vertex_color.width - 50, node_bsdf.location[1])
 
         # Texture Node
-        if use_diffuse:
+        if path_diffuse is not None:
             node_texture_diffuse: bpy.types.Node = nodes.new('ShaderNodeTexImage')
             node_texture_diffuse.name = "Diffuse Color"
             node_texture_diffuse.label = "Diffuse Color"
@@ -316,16 +336,18 @@ def to_blender(scene: PreBlender_Scene):
             node_vertex_color: bpy.types.Node = nodes.new('ShaderNodeVertexColor')
             node_vertex_color.name = "Vertex Color"
             node_vertex_color.label = "Vertex Color"
-            if use_diffuse:
+            if path_diffuse is not None:
+                node_vertex_color.name = "Vertex Color"
                 node_vertex_color.location = (node_mix_vertex_color.location[0] - node_vertex_color.width - 50, node_texture_diffuse.location[1] - 300)
             else:
                 if use_ambient_intensity:
+                    node_vertex_color.name = "Vertex Color"
                     node_vertex_color.location = (node_ambient_intensity.location[0] - node_vertex_color.width - 50, node_ambient_intensity.location[1] - 30)
                 else:
+                    node_vertex_color.name = "Vertex Color OnlyWRL"  # The name of this node is used to locate it again in order to reuse this material later
                     node_vertex_color.location = (node_bsdf.location[0] - node_vertex_color.width - 50, node_bsdf.location[1] - 30)
 
-
-        if use_alpha_map:
+        if path_alpha_map is not None:
             # Texture Aplha Inversion Node
             node_texture_alpha_inversion: bpy.types.Node = nodes.new('ShaderNodeMath')
             node_texture_alpha_inversion.name = "Invert Alpha"
@@ -340,17 +362,14 @@ def to_blender(scene: PreBlender_Scene):
             node_texture_alpha.name = "Alpha Map"
             node_texture_alpha.label = "Alpha Map"
             node_texture_alpha.width = 300
-            F = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
-            if os.path.isfile(F):
-                node_texture_alpha.image = bpy.data.images.load(filepath=F, check_existing=True)
+            node_texture_alpha.image = bpy.data.images.load(filepath=path_alpha_map, check_existing=True)
             node_texture_alpha.location = node_texture_alpha_inversion.location[0] - node_texture_alpha.width - 50, node_bsdf.location[1] - 480
-
 
         # ▬ NODE LINKS ▬
         links: bpy.types.NodeLinks = blenderMaterial.node_tree.links
         if use_ambient_intensity:
             links.new(node_ambient_intensity.outputs['Vector'], node_bsdf.inputs['Base Color'])
-            if use_diffuse:
+            if path_diffuse is not None:
                 if use_vertex_color:
                     links.new(node_mix_vertex_color.outputs['Color'], node_ambient_intensity.inputs['Vector'])
                     links.new(node_texture_diffuse.outputs['Color'], node_mix_vertex_color.inputs['Color1'])
@@ -361,7 +380,7 @@ def to_blender(scene: PreBlender_Scene):
                 if use_vertex_color:
                     links.new(node_vertex_color.outputs['Color'], node_ambient_intensity.inputs['Vector'])
         else:
-            if use_diffuse:
+            if path_diffuse is not None:
                 if use_vertex_color:
                     links.new(node_mix_vertex_color.outputs['Color'], node_bsdf.inputs['Base Color'])
                     links.new(node_texture_diffuse.outputs['Color'], node_mix_vertex_color.inputs['Color1'])
@@ -372,7 +391,7 @@ def to_blender(scene: PreBlender_Scene):
                 if use_vertex_color:
                     links.new(node_vertex_color.outputs['Color'], node_bsdf.inputs['Base Color'])
 
-        if use_alpha_map:
+        if path_alpha_map is not None:
             links.new(node_texture_alpha.outputs['Color'], node_texture_alpha_inversion.inputs[1])
             links.new(node_texture_alpha.outputs['Color'], node_bsdf.inputs['Alpha'])
             blenderMaterial.blend_method = 'CLIP'
@@ -389,7 +408,7 @@ def to_blender(scene: PreBlender_Scene):
         blender_bMesh.from_mesh(blender_mesh)
 
         # Add Data to Face Loops (UV, Color)
-        blender_bMesh_uvLayer = blender_bMesh.loops.layers.uv.new() if len(mesh.texcoords) > 2 else None
+        blender_bMesh_uvLayer = blender_bMesh.loops.layers.uv.new() if len(mesh.texcoords) > 1 else None
         blender_bMesh_colorLayer = blender_bMesh.loops.layers.color.new() if len(mesh.colors) > 2 else None
 
         # Create Vertices
@@ -419,10 +438,13 @@ def to_blender(scene: PreBlender_Scene):
 
         # Push BMesh to Mesh
         blender_bMesh.to_mesh(blender_mesh)
+        blender_bMesh.free()
+        # Set Object Properties
         blender_mesh.materials.append(blenderMaterials[mesh.material.index])
         blender_object.color = blenderMaterials[mesh.material.index].diffuse_color
+        # Add Object to New Collection
         blender_collection.objects.link(blender_object)
-        blender_bMesh.free()
+    # Add New Collection to Blender scene
     bpy.context.scene.collection.children.link(blender_collection)
 
 
