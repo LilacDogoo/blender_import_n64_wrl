@@ -21,6 +21,7 @@ debug = False
 if "bpy" in locals():
     import importlib
     import lilacdogoo_blender_import_wrl
+    importlib.reload(lilacdogoo_blender_import_wrl.file_wrl)
 else:
     from lilacdogoo_blender_import_wrl import file_wrl
 
@@ -38,9 +39,8 @@ _classes = (
 
 def register():
     # Register all classes contained in this package so that Blender has access to them
-    from bpy.utils import register_class
     for cls in _classes:
-        register_class(cls)
+        bpy.utils.register_class(cls)
 
     # Add menu items
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
@@ -52,4 +52,5 @@ def unregister():
 
     # Unregister classes
     for cls in _classes:
-        bpy.utils.unregister_class(cls)
+        if hasattr(bpy.types, cls.bl_idname):
+            bpy.utils.unregister_class(cls)

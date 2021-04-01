@@ -75,15 +75,13 @@ class PreBlender_Material:
         self.texture_repeat: bool = True
         self.first_mesh_linked = None
 
+    def __str__(self):
+        return self.name
+
 
 def preBlender_Material_equals(A: PreBlender_Material, B: PreBlender_Material) -> bool:
-    if A.texture_url != B.texture_url: return False
-    if A.texture_repeat != B.texture_repeat: return False
-    if A.diffuse_color != B.diffuse_color: return False
-    if A.emissive_color != B.emissive_color: return False
-    if A.alpha != B.alpha: return False
-    if A.ambient_intensity != B.ambient_intensity: return False
-    return True
+    R = A.texture_url == B.texture_url and A.texture_repeat == B.texture_repeat and A.diffuse_color == B.diffuse_color and A.emissive_color == B.emissive_color and A.alpha == B.alpha and A.ambient_intensity == B.ambient_intensity
+    return R
 
 
 class PreBlender_Mesh:
@@ -94,6 +92,9 @@ class PreBlender_Mesh:
         self.texcoords: List[(float, float)] = []
         self.colors: List[(float, float, float)] = []
         self.material: PreBlender_Material = None
+
+    def __str__(self):
+        return self.name
 
 
 class PreBlender_Scene:
@@ -204,12 +205,12 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
             # Search for Duplicate Material
             _mat_dupe_: bool = False
             for _mat_ in scene.materials:
-                if preBlender_Material_equals(_mat_, material):
+                if preBlender_Material_equals(material, _mat_):
                     material = _mat_  # use the duplicate instead
                     _mat_dupe_ = True
                     break
             # if no duplicate found then append
-            if _mat_dupe_ is not None:
+            if not _mat_dupe_:
                 material.index = len(scene.materials)
                 scene.materials.append(material)
             # Assign Material to Mesh
@@ -224,14 +225,14 @@ def read_wrl_file(directory: str = "C:\\VRML\\", filename: str = "output.wrl") -
     return scene
 
 
-# Pretty hack but should work relieably.
+# Pretty hack but should work reliably.
 # Skip the header then check if every single byte after is zero.
 def is_BMP_valid_transparency(path: str) -> bool:
     f: BinaryIO = open(os.path.join(path), 'rb')
     f.seek(0x36)
     b = f.read(1)
     while len(b) > 0:
-        if b[0] > 0: return True
+        if b[0] > 0: return True  # A byte was not zero, transparency will be activated
         b = f.read(1)
     return False
 
@@ -242,6 +243,8 @@ def to_blender(scene: PreBlender_Scene, p_reuse_materials: bool, p_cull_back_fac
 
     # ▬▬ MATERIALS ▬▬
     blenderMaterials: List[bpy.types.Material] = []
+    reusable_vertex_color_only_material: bpy.types.Material = None
+
     for mat in scene.materials:
         # Usage Flags
         path_diffuse: str = os.path.join(scene.directory, mat.texture_url) if mat.texture_url is not None else None
@@ -261,20 +264,26 @@ def to_blender(scene: PreBlender_Scene, p_reuse_materials: bool, p_cull_back_fac
                             break
                 if found_existing_material: continue
             elif use_vertex_color:
+                if reusable_vertex_color_only_material is not None:
+                    blenderMaterials.append(reusable_vertex_color_only_material)
+                    continue
                 found_existing_material: bool = False
                 for M in bpy.data.materials:
-                    if M.node_tree.nodes.find('Vertex Color OnlyWRL'):
+                    if M.node_tree.nodes.find('Vertex Color OnlyWRL') != -1:
+                        reusable_vertex_color_only_material = M
                         blenderMaterials.append(M)
                         found_existing_material = True
                         break
                 if found_existing_material: continue
 
+        path_alpha_map: str = None  # Another Usage Flag (Variable MUST be defined past this point)
         if path_diffuse is not None:
             path_alpha_map = os.path.join(scene.directory, mat.texture_url.replace("_c.", "_a."))
-            if not (os.path.isfile(path_alpha_map) and is_BMP_valid_transparency(path_alpha_map)):
+            if not os.path.isfile(path_alpha_map) or not is_BMP_valid_transparency(path_alpha_map):
                 path_alpha_map = None
         use_ambient_intensity = True if mat.ambient_intensity is not None and mat.ambient_intensity != 1 else False
 
+        # Create Blender Material
         blenderMaterial: bpy.types.Material = bpy.data.materials.new(mat.name)
         blenderMaterial.diffuse_color = (r.random(), r.random(), r.random(), 1.0)
         blenderMaterial.use_backface_culling = p_cull_back_facing
