@@ -39,7 +39,8 @@ Thanks to the dump that this person's plugin provides I was able to reassemble i
 <p>While working with the same game: You do not need to delete anything in the VRML folder between rips. The add-on will locate only what it needs and reuse assets where possible.
 
 <h2>Known Issue</h2>
-Alpha transparency is somewhat implemented but not perfect.<br>
+<p>Alpha transparency is somewhat implemented but not perfect.<br>
 There was not enough data in the "Nemu64 Graphics" dump to be able to determine how to correctly handle alpha for each object. I did the best I could. Sadly, that meant I had to make the plugin a lot slower.<i>All Alpha files get scanned one by one. If they are completly black then I assumed that there is no alpha.</i><br>
 Also some alphas are inverted. I could not determine which ones from the dump so instead I just made it easy to toggle.<br>
 <b>To toggle the alpha</b> place a noodle from node output "Invert Alpha.value" to node input "Principled BSDF.Alpha".
+<p>Vertex Coloring is supported but not so much tested. From what I can tell: Per Mesh: "Nemu64 Graphics VRML (Lemmy's Video)" only exports Texture-UVs OR VertexColors. NOT both.
